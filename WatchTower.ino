@@ -112,9 +112,10 @@ uint16_t ui_last_sync;
 // M5StickC Plus via M5Unified (que tambem liga o backlight pelo AXP192)
 // e mostramos o status na telinha (orientacao horizontal, 240x135).
 // Excluido da build de testes nativos (UNIT_TEST) -- ver stubs no final do bloco.
-#ifndef UNIT_TEST
 
-// Cores RGB565
+// Cores RGB565 (definidas fora do #ifndef porque o arduino-builder
+// gera prototipos varrendo ambos os ramos e avisaria de redefinicao
+// se elas fossem duplicadas em cada branch).
 #define C_BLACK  0x0000
 #define C_WHITE  0xFFFF
 #define C_CYAN   0x07FF
@@ -122,6 +123,8 @@ uint16_t ui_last_sync;
 #define C_RED    0xF800
 #define C_GREY   0x7BEF
 #define C_YELLOW 0xFFE0
+
+#ifndef UNIT_TEST
 
 // Inicializa o display e desenha o cabecalho fixo.
 void displayInit() {
@@ -176,13 +179,6 @@ void displayRunning(const struct tm* lt) {
 }
 
 #else  // UNIT_TEST: stubs no-op para a build de testes nativos
-#define C_BLACK 0
-#define C_WHITE 0
-#define C_CYAN 0
-#define C_GREEN 0
-#define C_RED 0
-#define C_GREY 0
-#define C_YELLOW 0
 void displayInit() {}
 void displayStatus(const char*, const char*, uint16_t) {}
 void displayRunning(const struct tm*) {}
