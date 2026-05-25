@@ -30,8 +30,19 @@
 #include <time.h>
 #include <esp_sntp.h>
 #include "customJS.h"
+#ifndef UNIT_TEST
 #include <M5Unified.h>  // LCD + AXP192 do M5StickC Plus
 #include "driver/gpio.h" // gpio_set_drive_capability (limita a corrente da antena)
+#else
+// Native test build (env:native, -D UNIT_TEST): stub the embedded-only
+// dependencies so test_bootstrap.cpp can include WatchTower.ino.
+typedef int gpio_num_t;
+typedef int gpio_drive_cap_t;
+static inline int gpio_set_drive_capability(gpio_num_t, gpio_drive_cap_t) { return 0; }
+#ifndef constrain
+#define constrain(x, a, b) ((x) < (a) ? (a) : ((x) > (b) ? (b) : (x)))
+#endif
+#endif
 
 // Flip to false to disable the built-in web ui.
 // You might want to do this to avoid leaving unnecessary open ports on your network.
@@ -100,6 +111,8 @@ uint16_t ui_last_sync;
 // O projeto original nao usa display. Aqui inicializamos o LCD do
 // M5StickC Plus via M5Unified (que tambem liga o backlight pelo AXP192)
 // e mostramos o status na telinha (orientacao horizontal, 240x135).
+// Excluido da build de testes nativos (UNIT_TEST) -- ver stubs no final do bloco.
+#ifndef UNIT_TEST
 
 // Cores RGB565
 #define C_BLACK  0x0000
@@ -162,6 +175,19 @@ void displayRunning(const struct tm* lt) {
   M5.Display.print(b);
 }
 
+#else  // UNIT_TEST: stubs no-op para a build de testes nativos
+#define C_BLACK 0
+#define C_WHITE 0
+#define C_CYAN 0
+#define C_GREEN 0
+#define C_RED 0
+#define C_GREY 0
+#define C_YELLOW 0
+void displayInit() {}
+void displayStatus(const char*, const char*, uint16_t) {}
+void displayRunning(const struct tm*) {}
+#endif
+
 // A callback that tracks when we last sync'ed the
 // time with the ntp server
 void time_sync_notification_cb(struct timeval *tv) {
@@ -220,7 +246,9 @@ void setup() {
   wifiManager.setAPCallback(accesspointCallback);
   displayStatus("Conectando ao", "WiFi...", C_WHITE);
   wifiManager.autoConnect("WatchTower");
+#ifndef UNIT_TEST
   displayStatus("WiFi conectado!", WiFi.localIP().toString().c_str(), C_GREEN);
+#endif
 
   clearBroadcastValues();
 
