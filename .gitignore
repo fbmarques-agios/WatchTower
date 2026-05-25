@@ -5,3 +5,6 @@
 .vscode/ipch
 .vscode/extensions.json
 WatchTower.ino.cpp
+
+# Manual do relogio (copyright Citizen) -- nao versionar
+p.pdf

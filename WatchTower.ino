@@ -6,6 +6,7 @@
 //     - ESP32Async / Async TCP ~3.4.9
 //     - WiFiManager ~2.0.17
 //     - ArduinoMDNS ~1.0.0
+//     - M5Unified (apenas no M5StickC Plus -- mostra o status no LCD)
 // - set the PIN_ANTENNA to desired output pin
 // - set the timezone as desired
 // - build and run the code on your device
@@ -29,18 +30,33 @@
 #include <time.h>
 #include <esp_sntp.h>
 #include "customJS.h"
+#include <M5Unified.h>  // LCD + AXP192 do M5StickC Plus
+#include "driver/gpio.h" // gpio_set_drive_capability (limita a corrente da antena)
 
 // Flip to false to disable the built-in web ui.
 // You might want to do this to avoid leaving unnecessary open ports on your network.
 const bool ENABLE_WEB_UI = true;
 
-// Set this to the pin your antenna is connected on
-const int PIN_ANTENNA = 13;
+// Set this to the pin your antenna is connected on.
+// M5StickC Plus: GPIO13 e usado pelo LCD interno, entao usamos o GPIO26,
+// que e um pino livre e exposto no header superior da placa.
+const int PIN_ANTENNA = 26;
+
+// Forca de saida (drive strength) do pino da antena -- 0 a 3:
+//   0 = mais fraco (~5 mA)   -- mais seguro, sinal fraco
+//   1 = fraco      (~10 mA)
+//   2 = padrao     (~20 mA)  -- forca normal de um GPIO do ESP32
+//   3 = maximo     (~40 mA)  -- USE SOMENTE com resistor ~100 ohm em serie
+// Sem resistor em serie, use no maximo o nivel 2. Mais voltas na bobina
+// ajudam mais (e com mais seguranca) do que aumentar este nivel.
+const int ANTENNA_DRIVE_LEVEL = 3;
 
 // Set to your timezone.
 // This is needed for computing DST if applicable
 // https://gist.github.com/alwynallan/24d96091655391107939
-const char *timezone = "PST8PDT,M3.2.0,M11.1.0"; // America/Los_Angeles
+// Brasil (horario de Brasilia, UTC-3, sem horario de verao desde 2019).
+// Para outros fusos: Acre "ACT5", Amazonas/Mato Grosso "AMT4".
+const char *timezone = "BRT3"; // America/Sao_Paulo
 
 
 enum WWVB_T {
@@ -80,6 +96,72 @@ uint16_t ui_broadcast;
 uint16_t ui_uptime;
 uint16_t ui_last_sync;
 
+// ===== LCD do M5StickC Plus =====
+// O projeto original nao usa display. Aqui inicializamos o LCD do
+// M5StickC Plus via M5Unified (que tambem liga o backlight pelo AXP192)
+// e mostramos o status na telinha (orientacao horizontal, 240x135).
+
+// Cores RGB565
+#define C_BLACK  0x0000
+#define C_WHITE  0xFFFF
+#define C_CYAN   0x07FF
+#define C_GREEN  0x07E0
+#define C_RED    0xF800
+#define C_GREY   0x7BEF
+#define C_YELLOW 0xFFE0
+
+// Inicializa o display e desenha o cabecalho fixo.
+void displayInit() {
+  auto cfg = M5.config();
+  M5.begin(cfg);
+  M5.Display.setRotation(1);            // horizontal: 240 x 135
+  M5.Display.fillScreen(C_BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setTextColor(C_CYAN, C_BLACK);
+  M5.Display.setCursor(6, 6);
+  M5.Display.print("WatchTower");
+  M5.Display.setTextColor(C_RED, C_BLACK);
+  M5.Display.setCursor(204, 6);
+  M5.Display.print("TX");
+  M5.Display.drawFastHLine(0, 28, 240, C_GREY);
+}
+
+// Mostra uma mensagem de status em duas linhas (fases de boot / erros).
+void displayStatus(const char* line1, const char* line2, uint16_t color) {
+  M5.Display.fillRect(0, 30, 240, 105, C_BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setTextColor(color, C_BLACK);
+  M5.Display.setCursor(6, 48);
+  M5.Display.print(line1);
+  M5.Display.setCursor(6, 78);
+  M5.Display.print(line2);
+}
+
+// Mostra o estado de operacao: data, hora grande e IP (chamado 1x/seg).
+void displayRunning(const struct tm* lt) {
+  static bool first = true;
+  if (first) {
+    M5.Display.fillRect(0, 30, 240, 105, C_BLACK);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(C_CYAN, C_BLACK);
+    M5.Display.setCursor(6, 110);
+    M5.Display.print(WiFi.localIP().toString().c_str());
+    first = false;
+  }
+  char b[32];
+  strftime(b, sizeof(b), "%a %d/%m/%Y", lt);
+  M5.Display.setTextSize(2);
+  M5.Display.setTextColor(C_WHITE, C_BLACK);
+  M5.Display.setCursor(6, 38);
+  M5.Display.print(b);
+
+  strftime(b, sizeof(b), "%H:%M:%S", lt);
+  M5.Display.setTextSize(4);
+  M5.Display.setTextColor(C_GREEN, C_BLACK);
+  M5.Display.setCursor(6, 64);
+  M5.Display.print(b);
+}
+
 // A callback that tracks when we last sync'ed the
 // time with the ntp server
 void time_sync_notification_cb(struct timeval *tv) {
@@ -91,6 +173,7 @@ void time_sync_notification_cb(struct timeval *tv) {
 // This is called when the device cannot connect to wifi.
 void accesspointCallback(WiFiManager*) {
   Serial.println("Connect to SSID: WatchTower with another device to set wifi configuration.");
+  displayStatus("Configure o WiFi", "rede: WatchTower", C_YELLOW);
 }
 
 // Convert a logical bit into a PWM pulse width.
@@ -113,6 +196,10 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
+  // Inicializa o LCD do M5StickC Plus e mostra o status do boot
+  displayInit();
+  displayStatus("Iniciando...", "", C_WHITE);
+
   pinMode(PIN_ANTENNA, OUTPUT);
   if( pixel ) {
     pixel->begin();
@@ -131,7 +218,9 @@ void setup() {
   // If no wifi, start up an SSID called "WatchTower" so
   // the user can configure wifi using their phone.
   wifiManager.setAPCallback(accesspointCallback);
+  displayStatus("Conectando ao", "WiFi...", C_WHITE);
   wifiManager.autoConnect("WatchTower");
+  displayStatus("WiFi conectado!", WiFi.localIP().toString().c_str(), C_GREEN);
 
   clearBroadcastValues();
 
@@ -167,6 +256,7 @@ void setup() {
   struct tm timeinfo;
   if(!getLocalTime(&timeinfo)){
     Serial.println("Failed to obtain time");
+    displayStatus("Falha no NTP", "reiniciando...", C_RED);
     if( pixel ) {
         pixel->setPixelColor(0, COLOR_ERROR );
         pixel->show();
@@ -175,9 +265,14 @@ void setup() {
     ESP.restart();
   }
   Serial.println("Got the time from NTP");
+  displayStatus("Sincronizado!", "Transmitindo...", C_GREEN);
 
   // Start the 60khz carrier signal using 8-bit (0-255) resolution
   ledcAttach(PIN_ANTENNA, KHZ_60, 8);
+
+  // Ajusta a forca de saida do pino da antena (ver ANTENNA_DRIVE_LEVEL).
+  gpio_set_drive_capability((gpio_num_t)PIN_ANTENNA,
+                            (gpio_drive_cap_t)constrain(ANTENNA_DRIVE_LEVEL, 0, 3));
 
   // green means go
   if( pixel ) {
@@ -302,11 +397,15 @@ void loop() {
         // Last Sync
         strftime(buf, sizeof(buf), "%b %d %H:%M", &buf_lastSync);
         ESPUI.print(ui_last_sync, buf);
+
+        // Atualiza o LCD do M5StickC Plus
+        displayRunning(&buf_now_local);
     }
 
     // Check for stale sync (24 hours)
     if( now.tv_sec - lastSync.tv_sec > 60 * 60 * 24 ) {
       Serial.println("Last sync more than 24 hours ago, rebooting.");
+      displayStatus("Sync ha +24h", "reiniciando...", C_RED);
       if( pixel ) {
         pixel->setPixelColor(0, COLOR_ERROR );
         delay(3000);
