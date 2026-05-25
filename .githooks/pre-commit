@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Pre-commit hook: build the M5StickC Plus firmware to catch syntax errors.
+# Install: git config core.hooksPath .githooks
+
+set -e
+
+PIO="$HOME/.platformio/penv/bin/pio"
+if [ ! -x "$PIO" ]; then
+    echo "PlatformIO not found at $PIO -- skipping pre-commit firmware build."
+    exit 0
+fi
+
+echo "=== Pre-commit: building m5stickc_plus ==="
+"$PIO" run -e m5stickc_plus -s
+
+echo "=== Pre-commit: OK ==="

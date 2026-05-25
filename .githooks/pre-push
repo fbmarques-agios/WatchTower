@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Pre-push hook: full build + native tests before publishing commits.
+# Install: git config core.hooksPath .githooks
+
+set -e
+
+PIO="$HOME/.platformio/penv/bin/pio"
+if [ ! -x "$PIO" ]; then
+    echo "PlatformIO not found at $PIO -- skipping pre-push checks."
+    exit 0
+fi
+
+echo "=== Pre-push: building m5stickc_plus ==="
+"$PIO" run -e m5stickc_plus -s
+
+echo "=== Pre-push: native tests ==="
+"$PIO" test -e native -s 2>&1 | tail -15
+
+echo "=== Pre-push: OK ==="
