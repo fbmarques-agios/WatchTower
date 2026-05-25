@@ -1,367 +1,352 @@
-# The Watch Tower WWVB transmitter
-
-![](docs/ezgif-2a44364473c432.gif)
-
-There are some beautiful radio-controlled watches available these days from Citizen, Seiko, Junghans, and even Casio. These timepieces don’t need fiddling every other month, which is great if you have more than one or two and can never remember what comes after “thirty days hath September…”
-
-In the US, these watches work by receiving a 60-bit 1-Hz signal on a 60-kHz carrier wave broadcast from Fort Collins, Colorado called [WWVB](https://en.wikipedia.org/wiki/WWVB). The broadcast is quite strong and generally covers the entire continental US, but some areas of the country can have unreliable reception. I live in the SF Bay Area in an area with high RF noise and my reception can be spotty. My watches sync often enough that it’s not an issue 363 days out of the year, but sometimes they can miss DST shifts for a day or two. The east coast is known to be even more challenging. And people who live in other countries such as Australia have generally been out of luck.
-
-Wouldn’t it be great if anyone anywhere in the world could set up a home transmitter to broadcast the time so their watches were always in sync?
-
-WWVB has been around awhile and there have been various other projects ([1](https://www.instructables.com/WWVB-radio-time-signal-generator-for-ATTINY45-or-A/),[2](https://github.com/anishathalye/micro-wwvb)) that have demonstrated the feasibility of making your own WWVB transmitter. But these all had very limited range. I wanted to build something that could cover my whole watch stand and be based on a more familiar toolset for the typical hobbyist, namely USB-based 32-bit microcontroller development boards, WiFi, and Arduino. My goal was to make something approachable, reliable, and attractive enough it could sit with my watch collection.
-
-## Is this legal?
-
-The FCC requires a license to transmit, but has an [exemption](https://www.law.cornell.edu/cfr/text/47/15.209) for 60 kHz transmitters as long as the field strength is under 40 *μ*V/m at 300 meters. You will [definitely not](https://github.com/emmby/WatchTower/issues/9) exceed this limit 💪🏼
-
-## About WWVB
-
-The classic WWVB transmits one bit of information per second (1Hz) and takes one minute (60 bits) to transmit a full time and date frame.
-
-### An example
-
-Here’s an example of one 60 second time encoding (graphic designed for "light mode"):
-
-![image.png](docs/image%201.png)
-
-You can see that the minute of the time is encoded in the first 10 seconds of the window. The hour is in the next 10 seconds, the day is between seconds 22 and 33, etc.
-
-If we wanted to indicate that the time was 30 minutes past the hour, for example, we would set bits 2 and 3 (20 and 10) to “high”. 
-
-| **Bit** | **00** | **01** | **02** | **03** | **04** | **05** | **06** | **07** | **08** | **09** |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Value** |  | 40 | 20 | 10 |  | 8 | 4 | 2 | 1 |  |
-| *Example: 30* |  | *0* | *1* | *1* |  | *0* | *0* | *0* | *0* |  |
-
-Similarly, the 7th hour of the day would be 0000111 for bits 12 thru 18.
-
-### It’s a trit, not a bit.
-
-How do we represent “high” and “low” for each 1s bit? You might think it would just be a high voltage for high and a low voltage for low, like you would use on a digital arduino pin, but that’s not how it’s done.
-
-WWVB “bits” are actually not just 0 and 1. They’re actually "trits” because they can represent a 0, 1, or a “mark”, and this is one reason why we can’t just use a simple high/low to represent them. The mark is important to allow simple receivers to orient themselves within the signal window. Your watch knows that the last second in the window and the first in the next window are both “marks”, and so it knows to start a new window whenever it sees two marks in a row.
-
-WWVB uses **Pulse Width Modulation** (PWM) to represent the three possible trit states. In a given 1 second bit, the width of the pulse determines whether the bit is a 0, 1, or mark.
-
-- If power is reduced for one-fifth of a second (0.2 s), this is a data bit with value zero.
-- If power is reduced for one-half of a second (0.5 s), this is a data bit with value one.
-- If power is reduced for four-fifths of a second (0.8 s), this is a special non-data "mark", used for framing.
-
-| **Low** | **Trit value** |
-| --- | --- |
-| 0.2s | 0 |
-| 0.5s | 1 |
-| 0.8s | mark |
-
-Coming back to that original example but just focusing on the Minutes section, you can see the trits in the color encoding of the diagram. 
-
-![image.png](docs/image%202.png)
-
-![#07FEFF](https://placehold.co/15x15/07FEFF/07FEFF.png) `Light blue` is high and ![#0001FC](https://placehold.co/15x15/0001FC/0001FC.png) `Dark blue` is low. You can see second 00 is dark blue (low) for 0.8s, which means it’s a “mark”.  Second 01 is dark blue for 0.2s, so it’s a 0. Second 02 is dark blue for 0.5s so it’s a 1, and so on.
-
-So now you know how to encode the time and date using WWVB!
-
-### The carrier wave
-
-There’s one more part of the signal that needs explanation. While we’re transmitting bits at a frequency of 1 bit per second (1 Hz), we’re actually doing it on top of a 60 kHz carrier wave by varying the amplitude of the carrier wave.
-
-Like we said in the previous section, we represent a high/low/mark trit by the width of our pulse. High for 200ms is a zero, high for 500ms is a 1, high for 800ms is a mark. The way we’ll do that on our 60 kHz carrier wave is by using PWM again, but this time on the 60 kHz signal instead of on the 1 Hz signal. We’ll use a duty cycle of 50% to represent High, which means that half of our 60 kHz pulse is high and half is low. We’ll use a duty cycle of 0% to represent Low which effectively means the whole pulse is low.
- 
- <img src="docs/dutycycle.png" width=400>
-
- So what you'll expect to see when you're transmitting a WWVB "mark" is a 1s pulse where half of the pulse is "high" using a 60 kHz signal at 50% duty, and the other half is "low" with a 0% duty (not to scale):
-
- ![mark](docs/mark.png)
-
- Similarly, a 0 would be a 60 kHz 50% duty cycle for 0.2s, followed by a 0% duty cycle for 0.8s. And a 1 would be the reverse.
-
-### The layers of WWVB
-
-In summary, a WWVB date/time is encoded using a few different layers of encoding. At the top is what we think of as a date/time and at the bottom is the 60 kHz carrier wave.
-
-|  |
-| --- |
-| A date/time is encoded as a… |
-| 60-bit frame, using… |
-| 1s PWM trits, on top of a… |
-| 60 kHz 50% duty cycle carrier wave |
-| 🐢🐢🐢 all the way down |
-
-Now that you understand how it works, let’s build the transmitter!
-
-## Components
-
-- An ESP32-based development board such as the AdaFruit QT Py ESP32, AdaFruit Feather ESP32 v2, Arduino Nano ESP32, Seeed Xiao ESP32C3 or similar. I used the [QT Py ESP32](https://www.adafruit.com/product/5395).
-- An H-bridge amplifier circuit. You can build your own, or I used the [Adafruit DRV8833 DC/Stepper Motor Driver Breakout Board](https://www.adafruit.com/product/3297). Boards using the TB6612 would probably also work, you just need something that can handle 5V or more, a few hundred milliamps and a switching frequency of 60khz or higher.
-- One or two [60khz ferrite rod antennas](https://www.canaduino.ca/product/60khz-atomic-clock-receiver-v4-wwvb-msf-jjy60/). You can pull one from an existing quartz radio-controlled movement, or I bought mine from Canaduino. If you want better reliability at distance you may consider using a second antenna. Some users have had luck with a simple 20 inch length of straight copper wire, but I found the signal to be too weak to be reliable.
-- Bread board and [jumper wires](https://www.amazon.com/dp/B08YRGVYPV).
-- PCB Mount Screw Terminal Block connector to connect your antenna(s), something like [this](https://www.amazon.com/dp/B09F6TC7RP). Not strictly necessary but nice to have. Use a two pin terminal if you only plan to have one antenna, or a four pin if you want two antennas.
-
-## Optional
-
-None of the following is necessary, but some of it might be nice to have.
-
-- **Oscilloscope**. It can be hard to know if your circuit is doing anything without an oscilloscope. There are some micro DSOs for around $100, and some android-based table DSOs for around $200, but I like the Rigol DHO800 series as an entry-level oscilloscope if your budget can stretch to around $400. A digital multimeter or an individual LED can also be helpful in a pinch.
-- **10V power supply**. If you need more power you can use an external power supply. I found the signal to be strong enough without it and preferred the convenience of a single USB power supply. If you want to go up to 13V, switch to the [TB6612](https://www.adafruit.com/product/2448)
-- **3D printer** if you would like to print the tower enclosure for your circuit.
-- **Permaboard** or **Perma-proto**. After you’ve prototyped your circuit you’ll want to move it to something more permanent. [Perma-proto](https://www.adafruit.com/product/571) is convenient because it exactly matches your breadboard layout. Permaboard is more configurable but less convenient. Either one can be cut to size.
-- **Soldering iron**. If you’re using permaboard, you’ll need a soldering iron. I love the [Pinecil v2](https://pine64.com/product/pinecil-smart-mini-portable-soldering-iron/), it’s USB-powered, auto-sleep, nearly instant-on, open-source and temperature controlled.
-- **GPS module**. The nice thing about using module development boards like the Feather, Grove, Arduino, etc. is their support for additional modules. The [AdaFruit Ultimate GPS FeatherWing](https://www.adafruit.com/product/3133) pairs well with their Feather boards and includes an accurate RTC. If you go GPS, you don’t necessarily need a microcontroller with WiFi.
-- **LCD display**. This can be a nice touch and can make it easier to tell if your tower is working or not. I like the [Adafruit ESP32 TFT Feather](https://www.adafruit.com/product/5483) or similar. I made an earlier prototype with a screen that displayed the current time, but didn’t like the way the screen lit up my bedroom at night. You can also connect many external displays using the simple I2C connector on many dev boards.
-
-## Instructions
-
-### Simulator
-
-Before you get started, you might be interested to see a simplified version of the software in action on the Wokwi Arduino online simulator.
-
-[![The Watch Tower on Wokwi](docs/wokwi.png)](https://wokwi.com/projects/431240334467357697)
-https://wokwi.com/projects/431240334467357697
-
-This simulator connects a virtual Arduino to a virtual logic analyser on PIN 4, and lets you download the output
-of PIN 4 for offline viewing on your computer.
-
-To use it:
-
-- Run the simulator for a few seconds. Notice that D0 is
-  flashing on the logic analyzer. The logs will also show
-  the current date/time (which starts at Jan 1 1970 since
-  we aren't using wifi to initialize it to another value)
-- Stop the simulator. The logic analyzer will automatically
-  download `wokwi-logic.vcd` to your computer.
-- Open `wokwi-logic.vcd` in a viewer like [PulseView](https://sigrok.org/wiki/PulseView)
-
-
-
-
-### Software
-
-https://github.com/emmby/WatchTower
-
-Upload the Arduino sketch to your Arduino using the Arduino IDE.
-
-The LED will light up yellow/orange while connecting to WiFi. If you haven’t yet set your SSID, connect your phone to SSID: WWVB and follow the instructions to enter your wifi password.
-
-Once the network is connected and the time has sync’d, the light will turn green briefly and then turn off.
-
-**Setup()**
-
-The Arduino setup() method does a few things.
-
-Initialize the components we’ll be using, particularly the serial port, LEDs, WiFi, output pins, timezone, and network time sync (NTP). The network time sync will happen automatically in the background every hour. This is important because the realtime clock (RTC) on most microcontrollers are notoriously subject to drift and are rarely accurate for more than a few hours.
-
-Start the 60 kHz carrier wave at a 50% duty cycle.
-
-**Loop()**
-
-Arduino then moves to the loop(), which continuously performs the following operations:
-
-- Get the current time in UTC
-- Convert it to your local timezone to determine DST
-- Compute whether the 60 kHz carrier wave should be set to 50% (logical high) or 0% (logical low) for that specific moment in time. Time is always UTC, except for the DST bit which is relative to your local timezone.
-- Set the PIN_ANTENNA to high or low based on that value.
-- [Optional] you can flash the led for high/low PWM. This is nice for making sure things are working, but it’s grounds for divorce in the bedroom.
-
-Do some other nice-to-haves like logging, setting LEDs and/or rebooting when there are issues.
-
-### Verify the microcontroller alone
-
-If you installed and ran your software and you set up the wifi connection, your board should now be outputting a signal on your output pin.
-
-If you have an LED, you can connect the long end (anode) to your output pin and the other end to ground. If everything is working it should flash on/off about once a second.
-
-![ezgif-814d4a585a4921.gif](docs/ezgif-814d4a585a4921.gif)
-
-If you have a digital oscilloscope, you should be able to see a 3V square wave with a periodicity of 16us (1 / 60,000) something like the following:
-
-![RigolDS2.png](docs/RigolDS2.png)
-
-That’s the 50% duty cycle PWM carrier wave initialized during setup().
-
-If you zoom out to say 1 second per grid square resolution, you’ll be able to see the WWVB signal clearly:
-
-![RigolDS10.png](docs/RigolDS10.png)
-
-In the 10 seconds shown here, I see a 1, mark, 0, 1, 1, mark, 1, 1, 1, and 1.
-
-Now if you modify the software to hardcode the date to Mar 6, 2008 7:30:00 am and zoom out to see a full 60 seconds, your signal should exactly match the signal in the example we started with:
-
-```c
-  buf_now_utc.tm_year = buf_now_local.tm_year = 108; // 2008 = 1900 + 108
-  buf_now_utc.tm_yday = buf_now_local.tm_yday = 65;
-  buf_now_utc.tm_mon = buf_now_local.tm_mon = 2;
-  buf_now_utc.tm_mday = buf_now_local.tm_mday = 6;
-  buf_now_utc.tm_hour = buf_now_local.tm_hour = 7;
-  buf_now_utc.tm_min = buf_now_local.tm_min = 30;
+# WatchTower — Fork para M5StickC Plus 1.1
+
+> Transmissor WWVB caseiro: faz o seu relógio radiocontrolado pegar a hora certa **sem precisar do sinal real** de Fort Collins (EUA).
+
+Este é um fork do projeto [emmby/WatchTower](https://github.com/emmby/WatchTower), adaptado para rodar no **M5StickC Plus 1.1** (ESP32-PICO-D4, 4 MB de flash). Foi montado e testado no Brasil, com foco em sincronizar o **Citizen H874** (Eco-Drive multibanda) — mas funciona com qualquer relógio que receba a banda WWVB (60 kHz).
+
+> 📄 A versão original em inglês deste README foi escrita para o build com Adafruit QT Py ESP32 + H-bridge DRV8833. Para esse caminho, consulte o [README do projeto upstream](https://github.com/emmby/WatchTower/blob/main/README.md). Este README cobre o caminho **M5StickC Plus**.
+
+---
+
+## Como funciona, em poucas palavras
+
+```
+NTP (pool.ntp.org)
+   ↓
+ESP32 mantém o relógio interno (UTC)
+   ↓
+A cada segundo, calcula o bit WWVB daquele segundo do quadro de 60 s
+   ↓
+Modula em largura de pulso uma portadora de 60 kHz no GPIO26
+   ↓
+Bobina ligada ao pino gera um campo magnético de 60 kHz
+   ↓
+O relógio (Citizen, Casio multibanda…) capta o campo na própria
+antena de ferrite interna e decodifica hora + data + ano
 ```
 
-![image.png](docs/image%203.png)
+É **acoplamento magnético de campo próximo** — não é uma "antena de rádio" no sentido comum. Alcance: poucos centímetros a algumas dezenas, dependendo da bobina.
 
-![image.png](docs/image%204.png)
+---
 
-Looks great! Everything is working as expected.
+## O que este fork adiciona ao upstream
 
-### Electronics assembly
+| Mudança | Por que |
+|---|---|
+| Novo ambiente PlatformIO `m5stickc_plus` | board `m5stick-c` + variante `m5stack_stickc_plus`, partição `huge_app.csv` (3 MB de app, sem OTA) para caber em 4 MB de flash |
+| Suporte ao LCD via M5Unified | Mostra cabeçalho, status de boot, data, hora e IP na telinha (240×135) |
+| Pino da antena em **GPIO26** (era 13 no upstream) | GPIO13 no M5Stick é usado pelo LCD interno |
+| Constante `ANTENNA_DRIVE_LEVEL` (0–3) | Ajusta por software a corrente de saída do GPIO — permite testar bobina sem resistor em série |
+| Timezone padrão `BRT3` (Brasília, sem horário de verão) | Brasil mapeia para a estação WWVB nos relógios multibanda |
+| Documentação em português + receitas para o **Citizen H874** | Esta README + procedimentos específicos do calibre |
+| Git hooks (`pre-commit` build, `pre-push` build + testes) | Mesmo padrão do projeto irmão `soc-bot-abasp` |
 
-Now that you’ve verified the microcontroller is working, it’s time to put all the components together.
+O env original do projeto (`adafruit_qtpy_esp32`) está preservado em `platformio.ini` e continua funcionando — quem tiver a placa Adafruit não perde nada.
 
-The electronics consist of three basic components: the microcontroller board, the amplifier breakout board, and the antenna(s).
+---
 
-The connections are quite simple, you can do them on a breadboard or a proto board. I recommend starting with a breadboard, which will look identical to this perma-proto board but without the solder:
+## Hardware
 
-![](docs/PXL_20250810_160436141.jpg)
+### Versão mínima (para teste)
 
-**Microcontroller board** (Adafruit ESP32 QT Py in this photo)
+- **M5StickC Plus 1.1** (ESP32-PICO-D4, com LCD e WiFi embutidos)
+- **Bobina** ligada entre `G26` e `GND` (qualquer fio, 10–30 voltas para começar — ver seção sobre antena)
+- Cabo USB-C para alimentar e gravar
+- (Opcional) Cabos jumper macho-macho para a conexão
 
-- Connect the 5V pin to the power plane (photo: J1).
-- Connect the ground pin to the ground plane (photo: J2).
-- Connect your signal pin [M0] to the input pin of your amplifier [AIN1] (photo: J4>J15).
+### Versão definitiva (planejada)
 
-**DRV8833 Amplifier breakout**
+- **Amplificador ponte-H** — TB6612FNG ou DRV8833 entre o GPIO e a bobina (empurra o sinal com muito mais força)
+- **Antena de ferrite de rádio AM** (bastão ~100 mm com bobina já enrolada de fábrica)
+- **Placa ilhada** para a montagem soldada permanente
+- **Caixa "torre" impressa em 3D** (o repositório upstream tem o STL para a versão QT Py — uma caixa específica para o M5Stick precisa ser projetada à parte)
+- Ferro de solda
 
-I decided to leave a gap between my microcontroller board and my amplifier board. This will support an optional second antenna mounted vertically, and it also makes it easier to access the STEMMA QT I2c connector on the QT Py.
+---
 
-- Connect the second input pin [AIN2] of your amplifier to ground (photo: J16).
-- The Adafruit DRV8833 motor driver board has a sleep pin that needs to be pulled high to enable the breakout, so connect that to power 5v or 3v power, whatever is convenient. We used 5V here. (photo: J17)
-- Connect ground to the ground plane. (photo: J21)
-- [Optional] Connect the “motor” voltage [VM] to your 5V plane (photo: J22). This is needed if you are powering your amplifier via USB like I have here, but it should not be done if you are planning to use an external power supply on VMotor.
-The antenna and amplifier circuit can contribute some noise to your 5V line. If you’re worried about it you might use an external power supply instead, but I found for these settings that the noise was negligible (although see Alternatives Considered for some lessons learned).
-- Optional: connect BIN2 to ground (photo: J18). This is only needed if you want to use a second antenna.
-- Optional: connect BIN1 to AIN1 (**not in photo**: I15>I19). For a second antenna.
+## Software necessário
 
-**Antenna(s)**
+- [PlatformIO Core](https://platformio.org/) (instalado em `~/.platformio/penv/`)
+- Git
 
-- You can plug your antennas directly into your breadboard, or use a 0.1" Pitch PCB Mount Screw Terminal Block Connector connected to [AOUT1], [AOUT2], [BOUT2], and [BOUT1] (photo: C16, C17, C18, C19). If you are only using one antenna, you only need [AOUT1] and [AOUT2].
+Toda a toolchain do ESP32 é baixada automaticamente pelo PlatformIO na primeira compilação.
 
-  The orientation of the antenna has a profound effect on the strength of the signal. I recommend using a second antenna at a 90 degree orientation to the first. You won't get a more powerful signal, but by having a second signal at a 90 degree orientiation you significanly increase the chance that your watches will be able to pick up a signal (see the section on antenna orientation below). The amplifier can easily handle two antennas.
+---
 
-  With one antenna, I was getting around 12 inches of range with the way my watches were oriented. With the second antenna, that jumped up to more than 6 feet!
+## Clonando e configurando
 
-  The STL tower has a hole in the center to allow space for a 60mm ferrite rod antenna mounted vertically in the gap between the microcontroller and amplifier PCBs.
+```bash
+git clone https://github.com/fbmarques-agios/WatchTower.git
+cd WatchTower
 
+# Ativa os hooks de git deste repositório (build pre-commit, build + testes pre-push)
+git config core.hooksPath .githooks
+```
 
+---
 
-### Signal Verification
+## Compilação e gravação
 
-You should be able to do the same LED trick as last time, only this time with the long anode on AOUT1 and the short cathode on AOUT2.
+A porta serial do M5StickC Plus normalmente aparece como `/dev/ttyUSB0`. Se ela estiver bloqueada por permissão, libere temporariamente com:
 
-Or with your oscilloscope, you can look at the output of your microcontroller and compare it to the output of your amplifier:
+```bash
+sudo chmod 666 /dev/ttyUSB0
+```
 
-![RigolDS6.png](docs/RigolDS6.png)
+(Para resolver de vez, `sudo usermod -aG dialout $USER` e relogue.)
 
-Here the 3V signal on the microcontroller is blue, and you can see that the amplifier is outputting a similar wave but at 5V. If your wave doesn’t look quite like this, check that your antenna is plugged in. The antenna has an impedance that will cause the ringing that you see in the waveform, that’s expected and okay.
+```bash
+PIO=~/.platformio/penv/bin/pio
 
-The final test is to verify it works with a real watch!
+# Só compilar
+$PIO run -e m5stickc_plus
 
-![ezgif-21153c1710707a.gif](docs/ezgif-21153c1710707a.gif)
+# Compilar e gravar
+$PIO run -e m5stickc_plus -t upload
 
-### Assembling the enclosure
+# Monitor serial (115200 baud)
+$PIO device monitor -e m5stickc_plus
 
-The enclosure is designed for a 51mm x 63mm perma-proto, which is the size of a half size perma-proto with the excess trimmed. You can trim a proto board by scoring along a straightedge with a utility knife and then bending the board at the score, either by pressing it down on a hard surface at an angle or using a vise grip. Or feel free to modify the Autodesk Fusion file to the size of your own board.
+# Rodar os testes nativos (Unity, no PC)
+$PIO test -e native
+```
 
-![image.png](docs/image%205.png)
+A gravação **substitui** o firmware que estiver na placa (por exemplo, o ESP32 Marauder). Para voltar, basta regravar via M5Burner.
 
-Here I also made a quick and dirty “mount” for the antenna by twisting a couple of loops of wire and soldering them to the perma proto. Hot glue also works great.
+---
 
+## Primeira configuração (WiFi)
 
-Print the enclosure using a 3D printer. I used standard PLA, standard 0.4mm nozzle, and pretty much default slicer settings with no supports.
+1. No primeiro boot, o M5Stick mostra **"Configure o WiFi"** na tela e cria uma rede WiFi chamada **`WatchTower`** (aberta).
+2. Conecte o **celular** nessa rede — um portal automático abre.
+3. Selecione a sua rede WiFi de casa e digite a senha.
+4. O M5Stick reinicia, conecta, e sincroniza a hora via NTP (`pool.ntp.org`).
+5. A telinha passa a mostrar data, hora e IP. O painel web fica em `http://watchtower.local` (ou pelo IP mostrado na tela).
 
+A configuração de WiFi fica salva — só faz isso uma vez (até trocar de rede).
 
-* STL: [The Watch Tower.stl](enclosure/The%20Watch%20Tower%20v18.stl)
-* Autodesk Fusion: [The Watch Tower.f3d](enclosure/The%20Watch%20Tower%20v18.f3d)
+---
 
-![image.png](docs/image%206.png)
+## O que aparece no LCD
 
-Insert the circuit board into the base. Orient the second antenna between the two PCBs and fit it into the hole in the tower. Then press the lid for a snap fit.
+```
+┌──────────────────────────────┐
+│ WatchTower               TX  │  ← cabeçalho ciano + indicador vermelho
+│ ──────────────────────────── │
+│ dom 24/05/2026               │  ← data (branco)
+│ 14:32:18                     │  ← hora grande (verde, atualiza por segundo)
+│ 192.168.0.170                │  ← IP do M5Stick na sua rede (ciano)
+└──────────────────────────────┘
+```
 
-## Enjoy!
+Durante o boot, em vez da data/hora aparecem mensagens de status como `Iniciando…`, `Configure o WiFi rede: WatchTower`, `Conectando…`, `Sincronizado! Transmitindo…`.
 
-Plug into USB and you’re done! Your watches should now sync automatically every night.
+---
 
-![image.png](docs/image.png)
+## A antena de transmissão (bobina)
 
+A "antena" do WatchTower é uma **bobina** ligada entre **G26 e GND** do M5Stick. Quanto mais voltas e melhor o núcleo magnético, mais forte o campo e maior a chance de o relógio decodificar.
 
-## Signal strength
+### Versão simples (para o primeiro teste)
 
-### How does distance affect signal strength?
+Pegue qualquer fio (jumper, fio de cabo velho), raspe as duas pontas até aparecer o cobre, e enrole **10 a 30 voltas** numa caneta, lápis ou pilha AA. Ligue uma ponta em `G26`, a outra em `GND`.
 
-You probably expect the signal to decrease as you get further away from the tower, but you might be surprised by how quickly the signal disappears.
+```
+  G26 ───(bobina)─── GND
+```
 
-The "inverse square law" tells us that RF signal strength decreases with the square of the distance. We can measure our signal strength using our oscilloscope, another antenna, and a ruler.
+⚠️ **Nunca** ligue um fio reto de G26 a GND. Isso é um curto e estressa o pino. Sempre enrolado.
 
-![signal strength at 1 inch setup](docs/signal-strength-1in.jpg)
+### Versão melhor (com bastão de ferrite)
 
-At one inch, our signal strength looks pretty solid! You can see that our 5V antenna square wave (yellow) is inducing a 16V sinusoidal wave in our receiving antenna. It's a little counter-intuitive that the receiving amplitude would be larger than the sending amplitude, but RF physics is beyond the scope of this README. Which is another way of saying 🤷.
+Bobina **com núcleo de ferrite** é o divisor de águas — concentra muito mais o campo magnético.
 
-![signal strength at 1 inch](docs/RigolDS42.png)
+Atalho barato: qualquer **rádio AM/MW velho** tem dentro uma "antena de ferrite" — um bastão com fio de cobre enrolado, com 2-4 fios saindo. É uma bobina pronta. Ligue as duas pontas da bobina maior (a com mais voltas) em `G26` e `GND`.
 
-Here are my readings as I move the receiver antenna further out. As expected, the amplitude decreases by roughly 4X as the distance doubles. 
+Ou compre nova no Mercado Livre por R$ 10–30: pesquise por `bastão de ferrite com bobina` ou `antena ferrite rádio AM`.
 
-| Distance | Amplitude |
-|----|---|
-| 1" | 24.2V |
-| 2" | 6.7V |
-| 4" | 1.2V |
-| 8" | 301mV |
-| 16" | 93mV |
-| 32" | 28mV |
+### Constante `ANTENNA_DRIVE_LEVEL` (0–3)
 
-When you zoom out, the one second pulses are still clearly distinguishable to the human eye, but it gets harder and harder as you get further away.
+No topo de [`WatchTower.ino`](WatchTower.ino), a constante `ANTENNA_DRIVE_LEVEL` define a força de saída do GPIO:
 
-![alt text](docs/RigolDS47.png)
+| Nível | Corrente | Uso |
+|---|---|---|
+| 0 | ~5 mA  | Mais fraco, mais seguro |
+| 1 | ~10 mA | Intermediário |
+| 2 | ~20 mA | Padrão de um GPIO do ESP32 |
+| 3 | ~40 mA | Máximo — **só com resistor ~100 Ω em série** OU com bobina de alta indutância (como a de ferrite) |
 
-This is all fine and good, but seeing a wave on an oscilloscope doesn't necessarily mean the watch can pick it up. We'll get into that shortly.
+Sem resistor, fique no máximo no nível 2 com bobina improvisada. A bobina de ferrite tem indutância suficiente para limitar a corrente sozinha — com ela, o nível 3 é seguro permanentemente.
 
+Após mudar a constante, recompile e regrave (`pio run -e m5stickc_plus -t upload`).
 
-### How does orientation affect signal strength?
+---
 
-Quite a lot!
+## Painel web
 
-Turning the receiver antenna 90 degrees drops the signal by 75%!
+Quando o M5Stick está conectado ao WiFi, acesse **http://watchtower.local** (ou o IP mostrado na tela) pelo navegador.
 
-![rotation](docs/RigolDS48.png)
+O painel mostra:
 
-Most watches receive their strongest signal through the watch face. For the best reception you should point your watch toward the tower (or toward Colorado). This may make more of a difference than a few inches of distance.
+- Hora atual (com fuso e timezone)
+- Data por extenso
+- Janela de transmissão (os 60 bits do quadro WWVB, com a posição atual)
+- Último sync NTP
+- Uptime do dispositivo
 
-This doesn't matter for watches on the stand where the signal is strong, but it can make a difference for watches that are further away.
+---
 
-This is why I recommend two antennas at right angles from each other.
+## Relógios compatíveis
 
-### Does the enclosure affect signal strength?
+Funciona com qualquer relógio que receba a banda **WWVB (EUA, 60 kHz)** — tipicamente os "multibanda" 5 ou 6 (que pegam várias estações pelo mundo).
 
-Plastic enclosures have a negligible effect on signal strength. The Watch Tower enclosure printed using generic PLA has maybe 5% or less of an impact on signal strength. Again, a few degrees of orientation will have a larger effect than an enclosure.
+| Marca / linha | Banda WWVB? |
+|---|---|
+| Casio Waveceptor / G-Shock Multiband 6 | ✅ |
+| Citizen multibanda (atomic timekeeping) | ✅ |
+| Junghans Mega Solar | ✅ |
+| Seiko Astron (radiocontrolados) | ✅ |
+| Relógios só DCF77 (Europa) | ❌ frequência diferente (77,5 kHz) |
+| Relógios só JJY (Japão) | ❌ frequência diferente (40 ou 60 kHz mas formato diferente) |
 
-|||
-|-|-|
-|No enclosure   | 1.02V |
-|Base           | 952mV |
-|Fully enclosed | 987mV |
+### Citizen H874 (testado neste fork)
 
-### How far away can my watch pick up the signal?
+O **Citizen H874** é um calibre Eco-Drive (alimentado por luz) com recepção radiocontrolada multibanda. Recebe **5 estações** em 4 regiões do mundo — uma delas é a estação **WWVB (Fort Collins, EUA)**, que é a que este projeto transmite.
 
-Watches vary in terms of their antenna design, their enclosures, antenna orientation, signal-to-noise filtering, etc.
+#### Configurações necessárias no relógio
 
-I tested with a Junghans Max Bill Mega Solar 59/2021.02 (Seiko movement) and a Casio Lineage LIW-M700D (Casio movement). In practice, the orientation of your watch will probably have orders of magnitude more influence on your reception than the model of your watch.
+1. **Fuso horário em UTC-3** (Brasília). No H874, o fuso é selecionado pela posição do **ponteiro dos segundos** num modo específico:
+   - Coroa na posição 1
+   - Gire a coroa até o ponteiro dos segundos apontar para a posição **57** (= UTC-3)
+   - Empurre a coroa para a posição 0
 
-Using the SINGLE antenna, I made five attempts with each watch at a distance of 9" with the antenna and the watch both flat on the surface. To minimize interference from Fort Collins, I placed everything inside a poor man's faraday cage (a stainless steel stock pot with a tight lid, which Gemini tells me is reasonably effective at blocking 60 kHz signals). For each attempt, I gave the watch 5 minutes to try to set the time before I lifted the lid. 
+   Esta é a posição correta porque o H874 escolhe a estação pelo fuso horário, e os fusos americanos (incluindo o UTC-3 do Brasil) ficam mapeados para a estação WWVB.
 
-![clock in a pot](docs/PXL_20250809_195931921.jpg)
+2. **Horário de verão em "STD MA"** (horário padrão / manual). Como o firmware transmite sempre "sem horário de verão" (consistente com a regra atual do Brasil), o "STD MA" garante que o relógio ignore o flag de DST e mostre sempre o horário padrão.
 
-| Model   ||||||
-|---------|-----|-|-|-|-|
-| Casio   | Yes | No | Yes | Yes | Yes |
-| Junghans| Yes | Yes | Yes | Yes | Yes |
+3. **Estado de carga OK**. O Eco-Drive precisa estar bem carregado — se o ponteiro dos segundos andar 1 vez a cada 2 segundos, a recepção **não roda**. Deixe o relógio na luz forte por algumas horas antes de testar.
 
-Outcome: ~90% success at 9" (single antenna)
+#### Antena interna fica nas 9 horas
 
-In practice, I've found that watches on the Watch Tower will reliably sync every time, and most watches on my nearby watch stand will also sync most of the time using a single antenna. Adding the second antenna increases reliability to basically 100%.
+A antena de ferrite do H874 fica na **lateral esquerda do mostrador**, na posição das 9 horas. Para o melhor acoplamento, deite o relógio sobre a sua bobina de transmissão com o lado das 9 horas alinhado com a bobina.
 
+#### Procedimento de recepção manual
 
+1. Coroa na posição 0.
+2. **Segure o botão A** (inferior direito) por **2 a 3 segundos** e solte.
+3. O ponteiro dos segundos deve **pular para a posição "RX"** e parar de andar normalmente. Se ele continuar marcando a hora, a recepção **não começou** — tente segurar por mais tempo.
+4. **Coloque o relógio sobre a bobina, lado das 9 horas alinhado**, e **não mova**. A recepção leva de 2 a 30 minutos. Quando termina, o ponteiro dos segundos volta ao normal.
+5. **Confira o resultado**: coroa na posição 0, **toque rápido no botão A** (apertar e soltar). O ponteiro dos segundos vai apontar para **OK** (sucesso) ou **NO** (falha).
 
-## Alternatives considered
+---
 
-- I wanted to avoid using a separate amplifier breakout board so I tried the Adafruit RP2040 scorpio. It can do 60khz PWM at 5V natively, but it was only able to drive 12mA per channel which wasn’t enough to saturate my ferrite antenna so the square wave collapsed.
-- I looked at the **Adafruit 8-Channel PWM or Servo FeatherWing** because I wanted to take advantage of module stacking, but it can only do 10mA per channel and 1.6khz.
-- I looked at Trinket and Itsybitsy ATmega based boards, but they can’t drive much current and they’re not modular with anything and they have no wifi so there’s little advantage over the QT Py.
-- I considered driving the DRV8833 with an external power supply. This would have given me higher voltage and likely a stronger signal. But I wanted the convenience of a single usb power supply, and the signal strength was sufficient for my needs.
-- ⚠️ **WARNING**: I tried the linking both the A and B H-bridges of the  DRV8833 in parallel, and I also upped the duty cycle to 80%. Totally blew out my microcontroller, presumably with a flyback voltage due to the high inductance antenna. I’m not sure if it was the parallel or the 80% or the combination of the two, it would be worth experimenting further but I haven’t yet.
+## Problemas comuns
+
+### O relógio sincronizou só a hora, a data continua errada
+
+Isso quase sempre é **posição de referência do calendário desalinhada** — o relógio recebeu a data correta, mas o ponteiro do dia está num "zero" deslocado. Solução no próprio relógio (manual H874, pág. 9):
+
+1. Coroa na posição 0.
+2. **Segure o botão B** (superior direito) por **10 segundos ou mais**. Os ponteiros vão se mover para as posições de referência salvas em memória.
+3. Confira se cada um está na posição correta:
+
+| Indicador | Deve apontar para |
+|---|---|
+| Fase da lua | Lua cheia |
+| Ponteiro de função (sub-mostrador) | "S" (Sunday / domingo) |
+| Indicação da data | Meio caminho entre 31 e 1 |
+| Ponteiros das horas, minutos, segundos | 0h 00min 0s (todos para o 12) |
+| Ponteiro das 24 horas | 24 |
+
+4. Se tudo certo, aperte B uma vez para confirmar.
+5. Se algum estiver errado: puxe a coroa para a posição 2, aperte B para selecionar o alvo a corrigir (sequência: fase da lua → ponteiro de função/data → horas/min/24h → segundos), gire a coroa para acertar cada um, empurre a coroa para 0 e aperte B para confirmar.
+
+Depois disso, refaça a recepção manual.
+
+### O resultado dá NO
+
+O sinal está fraco demais para o relógio decodificar. Em ordem de impacto:
+
+1. **Bobina ruim** — poucas voltas ou sem núcleo de ferrite. Resolva com mais voltas (50+) ou trocando para uma bobina de ferrite de rádio AM.
+2. **Posição** — o ferrite interno do relógio (nas 9 horas) precisa estar perto e alinhado com a sua bobina. Tente girar o relógio.
+3. **Carga baixa** no Eco-Drive — recarregue na luz forte.
+4. **Drive level baixo** — suba o `ANTENNA_DRIVE_LEVEL` (lembrando do limite de corrente sem amplificador).
+
+### Pino do M5Stick estressado
+
+Se você ficou no `ANTENNA_DRIVE_LEVEL = 3` com bobina de fio comum por horas, o GPIO pode ter degradado. Sinais: o sinal sumiu mesmo recompilando, ou a transmissão ficou intermitente. Solução: trocar o pino (existem outros GPIOs livres no header — basta mudar `PIN_ANTENNA` no código) ou trocar o M5Stick.
+
+### A telinha fica preta
+
+Se o firmware não estiver inicializando o LCD (bug, build errado), confira pelo monitor serial se o ESP32 está bootando. Tela preta sem ESP32 também responder = M5Stick travado ou descarregado. Tela preta com serial ativo = bug no display init — abra uma issue.
+
+---
+
+## Estrutura do projeto
+
+```
+.
+├── WatchTower.ino              # Firmware: setup, loop, encoder WWVB, LCD
+├── platformio.ini              # Envs de build (m5stickc_plus, adafruit_qtpy_esp32, native)
+├── customJS.h                  # JavaScript customizado injetado no ESPUI
+├── test/test_native/           # Testes Unity (rodam no PC)
+├── test/mocks/                 # Mocks de Arduino/ESP/WiFi/ESPUI usados pelos testes
+├── enclosure/                  # STL e .f3d da caixa (upstream, formato para QT Py)
+├── docs/                       # Imagens usadas pelo README original
+├── .githooks/                  # pre-commit e pre-push (build + testes)
+├── CLAUDE.md                   # Guia para Claude Code (arquitetura, gotchas)
+└── README.md                   # Este arquivo
+```
+
+### Ambientes de build (`platformio.ini`)
+
+| Env | Placa / variante | Para que serve |
+|---|---|---|
+| `m5stickc_plus` *(padrão)* | `m5stick-c` + variante `m5stack_stickc_plus`, partição `huge_app.csv` | Este fork |
+| `adafruit_qtpy_esp32` | `adafruit_qtpy_esp32`, partição `default_8MB.csv` | Build original do upstream |
+| `native` | host (Linux/macOS/Win) | Testes Unity do encoder WWVB |
+
+---
+
+## Hooks de git
+
+Configurados em [`.githooks/`](.githooks/):
+
+- **pre-commit** — compila `m5stickc_plus` (cacheado, ~15 s) para pegar erro de sintaxe antes de gravar o commit.
+- **pre-push** — compila + roda os 5 testes nativos antes de subir.
+
+Ative em qualquer clone com:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Os hooks pulam graciosamente se o PlatformIO não estiver instalado.
+
+---
+
+## Status do projeto
+
+Este fork ainda está em evolução. O **firmware** está estável e validado (5/5 testes nativos passam, build limpo, transmissão WWVB conferida no log serial). A **antena de teste com fio comum** funciona de forma intermitente. Próximos passos:
+
+- [ ] Receber e ligar a antena de ferrite (pendente)
+- [ ] Receber o amplificador TB6612FNG e a placa ilhada (pendente)
+- [ ] Montagem soldada definitiva (pendente)
+- [ ] Projetar uma torre 3D específica para o M5Stick (pendente)
+- [ ] Abrir Pull Request opcional ao [upstream](https://github.com/emmby/WatchTower) com o env do M5Stick
+
+---
+
+## Créditos
+
+- Projeto original: [emmby/WatchTower](https://github.com/emmby/WatchTower) — toda a lógica de codificação WWVB, esquema H-bridge e caixa 3D vêm dele. Este fork apenas adapta para outro hardware e adiciona o LCD.
+- Fork e adaptação para M5StickC Plus / Brasil: [@fbmarques-agios](https://github.com/fbmarques-agios).
+- Bibliotecas: WiFiManager (tzapu), ESPUI (emmby fork), AsyncWebServer (ESP32Async), M5Unified (M5Stack), Adafruit NeoPixel.
+
+---
+
+## Licença
+
+MIT — veja [LICENSE](LICENSE). Mesmos termos do upstream.
+
+> ⚖️ Sobre legalidade: o WWVB real opera com licença federal nos EUA. A regulamentação da FCC isenta transmissores de 60 kHz desde que o campo elétrico seja menor que 40 μV/m a 300 metros — e uma bobina de poucos centímetros de alcance fica ordens de grandeza abaixo disso. Para uso doméstico no Brasil, a potência aqui envolvida está bem abaixo de qualquer limiar regulatório de dispositivo de baixa potência.

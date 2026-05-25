@@ -13,7 +13,7 @@ What this fork adds on top of upstream:
 - LCD support via M5Unified (header, boot status, live date/time/IP)
 - `ANTENNA_DRIVE_LEVEL` constant (0-3) tuning the GPIO output drive strength
 - Brazil timezone default (`BRT3`, no DST)
-- PT-BR user documentation ([INSTRUCOES_M5STICK.md](INSTRUCOES_M5STICK.md))
+- PT-BR fork-specific README (replaces the upstream English one)
 
 ## Architecture
 
@@ -48,8 +48,7 @@ The two firmware envs share `[esp32_base]` (platform, framework, lib_deps). `m5s
 | `customJS.h` | Custom JS injected into the ESPUI page |
 | `test/test_native/test_bootstrap.cpp` | Unity tests for WWVB encoding (includes `WatchTower.ino` directly) |
 | `test/mocks/*.h` | Arduino / ESP / ESPUI / WiFi mocks used by the native test build |
-| `INSTRUCOES_M5STICK.md` | User guide (PT-BR) for the M5Stick variant: flashing, coil, H874 watch |
-| `README.md` | Original English manual (upstream) — covers the QT Py / DRV8833 build |
+| `README.md` | PT-BR user manual for this fork (M5StickC Plus path + Citizen H874 specifics) |
 | `enclosure/The Watch Tower.{stl,f3d}` | 3D-printable case (upstream — fits QT Py, NOT M5Stick) |
 
 ## Commands
@@ -111,8 +110,7 @@ git config core.hooksPath .githooks
 | Doc | Content | When to update |
 |---|---|---|
 | `CLAUDE.md` (this file) | Architecture, build envs, dev-time landmines, key decisions — max ~150 lines | New env, new firmware decision, new dev-time landmine |
-| `INSTRUCOES_M5STICK.md` | End-user guide (PT-BR): flashing, coil wiring, watch setup, H874-specific | New hardware step, new user-facing behavior |
-| `README.md` | Upstream English manual — covers the QT Py / DRV8833 reference build | Don't edit — upstream owns it |
+| `README.md` | PT-BR end-user manual for this fork: install, flashing, coil wiring, watch setup, troubleshooting (H874-specific). Replaces the upstream English README | New hardware step, new user-facing behavior, status updates |
 | `enclosure/` | Upstream 3D model (QT Py form factor) | Don't edit — upstream owns it. M5Stick-specific enclosure will live under a new path |
 
-End-user instructions (where to plug what, how to use the watch) → `INSTRUCOES_M5STICK.md`. Firmware-side decisions, build-system quirks, hidden invariants → here.
+End-user instructions (where to plug what, how to use the watch) → `README.md`. Firmware-side decisions, build-system quirks, hidden invariants → here.
