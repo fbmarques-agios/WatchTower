@@ -12,6 +12,10 @@ Confirmado funcionando com **Citizen Eco-Drive H874 (Titanium Radio Controlled)*
 - 📅 Data atualizada
 - 🇧🇷 Operando em São Paulo, Brasil (fora do alcance natural do WWVB)
 
+![Montagem funcionando: M5StickC Plus + TB6612 + antena de ferrite sincronizando um Citizen H874](docs/images/montagem-funcionando.jpg)
+
+*Montagem completa em operação: M5StickC Plus gerando o sinal WWVB, TB6612 amplificando, antena de ferrite acoplada ao relógio (lado das 9h). Recepção OK em 2 a 30 minutos.*
+
 ---
 
 ## Pra quem é isso?
@@ -26,6 +30,10 @@ Marcas/modelos comuns que suportam WWVB:
 - Vários outros relógios "atomic" / "radio controlled"
 
 Este projeto cria um **pequeno transmissor caseiro de 60 kHz no seu próprio quarto**, que o relógio capta como se fosse o sinal real do WWVB.
+
+![Citizen Eco-Drive H874 Titanium Radio Controlled — o relógio que motivou este fork](docs/images/citizen-h874.jpg)
+
+*O Citizen Eco-Drive H874 (Titanium Radio Controlled) — o protagonista deste projeto. Multibanda capaz de receber WWVB (EUA), DCF77 (Alemanha), JJY (Japão) e BPC (China), mas sem cobertura nativa no Brasil.*
 
 ---
 
@@ -93,6 +101,10 @@ Meça com o multímetro: STBY, AIN1, VCC, VM devem todos estar nas tensões cert
 
 ## 🛒 Hardware necessário
 
+![Componentes do projeto: M5StickC Plus (em cima), TB6612, protoboard, jumpers e bobina de ferrite com fio esmaltado](docs/images/componentes.jpg)
+
+*Todos os componentes do projeto antes da montagem. No alto à direita, o M5StickC Plus já rodando o firmware (tela mostrando data, hora e IP). À direita, a antena de ferrite com a bobina enrolada — o "transmissor" propriamente dito.*
+
 Lista do que você precisa comprar (preços de maio/2026 no Mercado Livre, Brasil):
 
 | Item | Valor aproximado | Pra que serve |
@@ -141,6 +153,11 @@ O módulo vem com pinos soltos. Solde-os usando a protoboard como suporte (ela a
 ### Fase 3: Montar o circuito na protoboard
 
 Use a protoboard pra testar sem comprometer. Esta tabela é o esquema final:
+
+![Pinout do módulo TB6612FNG: PWMA, AIN2, AIN1, STBY, BIN1, BIN2, PWMB, GND de um lado; VM, VCC, GND, AO1, AO2, BO2, BO1, GND do outro](docs/images/tb6612-pinout.jpg)
+
+*Pinout do breakout TB6612FNG visto de cima — use como referência ao montar. A serigrafia em cima da placa identifica cada pino. Vamos usar apenas o canal A (PWMA / AIN1 / AIN2 / AO1 / AO2).*
+
 
 **Fios do M5Stick → trilhos da protoboard:**
 
