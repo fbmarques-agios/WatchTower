@@ -1,352 +1,307 @@
-# WatchTower — Fork para M5StickC Plus 1.1
+# WatchTower BR 📡⌚
 
-> Transmissor WWVB caseiro: faz o seu relógio radiocontrolado pegar a hora certa **sem precisar do sinal real** de Fort Collins (EUA).
+> **Sincronize seu relógio radiocontrolado multibanda em casa, no Brasil.**
+> Pequeno transmissor WWVB caseiro de 60 kHz que faz seu Citizen, Casio Waveceptor, Junghans ou outro multibanda WWVB pegar a hora certa **sem precisar do sinal de Fort Collins (EUA)**.
 
-Este é um fork do projeto [emmby/WatchTower](https://github.com/emmby/WatchTower), adaptado para rodar no **M5StickC Plus 1.1** (ESP32-PICO-D4, 4 MB de flash). Foi montado e testado no Brasil, com foco em sincronizar o **Citizen H874** (Eco-Drive multibanda) — mas funciona com qualquer relógio que receba a banda WWVB (60 kHz).
+## ✅ Status: TESTADO E FUNCIONANDO
 
-> 📄 A versão original em inglês deste README foi escrita para o build com Adafruit QT Py ESP32 + H-bridge DRV8833. Para esse caminho, consulte o [README do projeto upstream](https://github.com/emmby/WatchTower/blob/main/README.md). Este README cobre o caminho **M5StickC Plus**.
+Confirmado funcionando com **Citizen Eco-Drive H874 (Titanium Radio Controlled)** em maio/2026:
+
+- ⏱️ Recepção OK no relógio
+- 🕐 Hora sincronizada com NTP
+- 📅 Data atualizada
+- 🇧🇷 Operando em São Paulo, Brasil (fora do alcance natural do WWVB)
 
 ---
 
-## Como funciona, em poucas palavras
+## Pra quem é isso?
+
+Se você tem um **relógio radiocontrolado multibanda** (compatível com WWVB de 60 kHz) e mora **longe de Fort Collins, Colorado** (basicamente o mundo todo fora da América do Norte), seu relógio **nunca recebe sinal**. As linhas de tempo dele dependem de você ajustar manualmente, perdendo a graça do "atomic timekeeping".
+
+Marcas/modelos comuns que suportam WWVB:
+- **Citizen Eco-Drive Radio Controlled** (multibanda 5 ou 6)
+- **Casio Waveceptor / G-Shock Multiband 6**
+- **Junghans Mega Solar**
+- **Seiko Astron** (radiocontrolados, não os GPS)
+- Vários outros relógios "atomic" / "radio controlled"
+
+Este projeto cria um **pequeno transmissor caseiro de 60 kHz no seu próprio quarto**, que o relógio capta como se fosse o sinal real do WWVB.
+
+---
+
+## Como funciona, em 3 frases
+
+1. Um **M5StickC Plus** (mini computador ESP32) pega a hora certa pela **internet (NTP)**.
+2. Ele **gera o sinal WWVB** modulado em 60 kHz e empurra esse sinal por um **amplificador (TB6612)** numa **bobina de ferrite**.
+3. A bobina emite o campo magnético pertinho, **o relógio capta com a antena interna dele** e sincroniza hora e data — pensando que recebeu o sinal real dos EUA.
+
+> É **acoplamento magnético de campo próximo** — não é uma antena de rádio convencional. O alcance é de **poucos cm**, então o relógio fica encostado na bobina durante a recepção (2 a 30 min).
+
+---
+
+## ⚠️ Lições aprendidas (LEIA ANTES de começar!)
+
+Foram **dias de debug** pra chegar no projeto funcionando. Se você for replicar, esses aprendizados economizam horas:
+
+### 1. 🔧 Multímetro digital é **obrigatório**, não opcional
+
+> Eu passei **2 dias debugando às cegas** sem multímetro, trocando peças, suspeitando do firmware, refazendo soldas. O problema real era **um plugue solto** no 5V — coisa que o multímetro resolve em 30 segundos.
+
+Custa **R$30**. Compre **antes** de começar o build. Sem ele você vai sofrer.
+
+### 2. 🔌 "Plugue firme" frequentemente não está firme
+
+Protoboard com fios finos enrolados em pino macho parecem firmes, mas o contato falha. **Meça com o multímetro** os 3V3, 5V, GND e VM **antes** de testar o sinal. Se algum desses estiver fora, **nada** funciona.
+
+### 3. 📞 Bobina de ferrite tem fios super finos e frágeis
+
+Cada vez que você **solda, dessolda ou raspa** o fio da bobina, você está perto de quebrá-lo. **Limite o manuseio**. Quando soldar, faça **uma vez só** e bem feito. Fio esmaltado: **raspe o esmalte** com lixa ou estilete antes de soldar (senão a solda gruda mas não conduz).
+
+### 4. 🔋 Relógio precisa estar **100% carregado**
+
+Eco-Drive com carga baixa **não roda recepção**. Antes do teste, deixe o relógio na **luz forte da janela** por algumas horas. Se o ponteiro dos segundos pula de 2 em 2 segundos, está com pouca carga.
+
+### 5. 🌐 Fuso horário determina **qual estação o relógio escuta**
+
+O Citizen H874 (e outros multibanda) escuta uma estação diferente dependendo do fuso configurado:
+
+- **UTC-3 (Brasília)** → ouve **WWVB (EUA, 60 kHz)** ✅ É o que a gente transmite!
+- UTC+0 (padrão de fábrica após reset) → ouve **DCF77 (Alemanha, 77,5 kHz)** ❌
+- UTC+8 → ouve BPC (China)
+- UTC+9 → ouve JJY (Japão)
+
+**Depois de fazer reset total no relógio, o fuso volta pra UTC+0**, e ele passa a procurar a estação alemã — não a nossa! Sempre re-configure o fuso pra **UTC-3 (posição 57 do ponteiro de segundos)** depois de qualquer reset.
+
+### 6. 📍 Posição de referência dos ponteiros afeta o display
+
+O H874 tem "posição de referência" dos ponteiros e do calendário. Se ela está desalinhada, o relógio **recebe a hora e a data certas mas exibe errado**. Procedimento de correção no manual, página 9.
+
+### 7. ⚡ Bare GPIO + ferrite às vezes funciona, mas é marginal
+
+Você consegue obter recepção apenas com a bobina ligada direto no GPIO do M5Stick (3,3V), mas é instável. O **amplificador TB6612 (5V, alta corrente)** é o que faz funcionar **confiável**.
+
+### 8. 🔇 Chip TB6612 frio = chip não está chaveando
+
+Se o TB6612 fica frio durante operação, ele não está empurrando corrente. Provavelmente:
+- **STBY não está em 3V3** → chip em standby (foi nosso problema!)
+- VM não tem 5V
+- Algum jumper de controle solto
+
+Meça com o multímetro: STBY, AIN1, VCC, VM devem todos estar nas tensões certas.
+
+---
+
+## 🛒 Hardware necessário
+
+Lista do que você precisa comprar (preços de maio/2026 no Mercado Livre, Brasil):
+
+| Item | Valor aproximado | Pra que serve |
+|---|---|---|
+| **M5StickC Plus 1.1** (ESP32-PICO + LCD) | R$ 100 | O "cérebro" — gera o sinal |
+| **TB6612FNG breakout** | R$ 25 | Amplificador (essencial!) |
+| **Antena de ferrite com bobina** (100mm, para rádio AM) | R$ 33 | A "antena" transmissora |
+| **Protoboard 830 furos** (MB-102) | R$ 19 | Pra montar o circuito |
+| **Jumpers macho-macho** (40 unid) | R$ 19 | Pra conectar tudo |
+| **Placa ilhada 3x7cm** (5 unid) | R$ 28 | Pra montagem definitiva (fase final) |
+| **Ferro de solda básico** | R$ 30-50 | Pra soldar pinos no TB6612 |
+| ⚠️ **Multímetro digital** | R$ 30 | **NÃO PULE** — leia lição #1 acima |
+| Pilha 9V + clip *(opcional)* | R$ 15 | Pra mais potência (substituir 5V) |
+| **TOTAL** | **~R$ 300** | |
+
+> 🛑 Sobre o multímetro: parece "supérfluo" pra quem nunca debugou eletrônica, mas é a **diferença entre 2 horas e 2 dias** de trabalho. Não tente sem.
+
+---
+
+## 🔨 Build — caminho que funcionou
+
+### Fase 1: Firmware no M5Stick (15 min)
+
+```bash
+# Instalar PlatformIO (uma vez)
+python3 -c "$(curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py)"
+
+# Clonar
+git clone https://github.com/fbmarques-agios/WatchTower.git
+cd WatchTower
+
+# Compilar e gravar (M5Stick conectado por USB)
+sudo chmod 666 /dev/ttyUSB0  # libera porta serial
+~/.platformio/penv/bin/pio run -e m5stickc_plus -t upload
+```
+
+No primeiro boot, o M5Stick cria a rede WiFi "WatchTower" — conecte pelo celular e configure sua rede de casa. Depois disso ele sincroniza com NTP e fica pronto.
+
+### Fase 2: Soldar o TB6612
+
+O módulo vem com pinos soltos. Solde-os usando a protoboard como suporte (ela alinha os pinos enquanto você solda):
+1. Espete as duas barras de pinos na protoboard (atravessando o vale do meio).
+2. Encaixe o TB6612 por cima.
+3. Solde cada pino do topo. Não precisa muita solda — só o suficiente pra cobrir.
+
+### Fase 3: Montar o circuito na protoboard
+
+Use a protoboard pra testar sem comprometer. Esta tabela é o esquema final:
+
+**Fios do M5Stick → trilhos da protoboard:**
+
+| M5Stick | Protoboard | Pra que |
+|---|---|---|
+| `3V3` | Trilho `+` esquerdo (será o 3V3) | Alimenta a lógica |
+| `5V` | Trilho `+` direito (será o 5V) | Alimenta a ponte-H |
+| `GND` | Trilho `-` esquerdo (será o GND) | Terra |
+| `G26` | Pino **PWMA** do TB6612 | Sinal de 60 kHz |
+
+**Jumpers do TB6612 (entre pinos da placa):**
+
+| Pino TB6612 | Liga em | Pra que |
+|---|---|---|
+| **VM** | Trilho 5V | Alimentação da ponte |
+| **VCC** | Trilho 3V3 | Alimentação da lógica |
+| **GND** (qualquer um) | Trilho GND | Terra |
+| **STBY** | Trilho 3V3 | **Acorda o chip** (sem isso ele dorme!) |
+| **AIN1** | Trilho 3V3 | Direção "forward" |
+| **AIN2** | Trilho GND | Direção "forward" |
+
+**Antena de ferrite:**
+- Os dois fios da bobina → pinos **AO1** e **AO2** do TB6612.
+- ⚠️ **Use jumpers (ponta fêmea segura o fio fino)** — não enfie o fio fino direto no furo da protoboard, não faz contato.
+
+### Fase 4: ⚠️ Verificação com multímetro (ANTES de testar)
+
+Antes de ligar o relógio no circuito, mede com o multímetro (configuração: `V=` escala 20, ponta preta no GND):
+
+| Onde tocar a ponta vermelha | Deve dar |
+|---|---|
+| Trilho 3V3 | ~3,3 V |
+| Trilho 5V | ~5,0 V |
+| Pino VCC do TB6612 | ~3,3 V |
+| Pino VM do TB6612 | ~5,0 V |
+| **Pino STBY do TB6612** | **~3,3 V** ⚡ crítico! |
+| Pino AIN1 do TB6612 | ~3,3 V |
+| Pino AIN2 do TB6612 | ~0 V |
+
+**Se algum estiver muito diferente, AJUSTE antes de prosseguir.** Foi nosso bloqueio principal: STBY estava em 0,6 V (chip dormindo) por causa de um plugue solto. Sem o multímetro, levaríamos dias pra achar.
+
+### Fase 5: Configurar o relógio (H874)
+
+1. **Carregue o relógio**: deixe na luz forte por algumas horas. Tem que estar com bateria cheia.
+2. **Fuso horário em UTC-3**:
+   - Coroa na posição 1.
+   - Gire a coroa até o ponteiro dos segundos apontar a **posição 57** (= UTC-3 = WWVB).
+   - Empurre a coroa pra posição 0.
+3. **Horário de verão em STD MA** (manual / standard time): nosso firmware transmite "sem DST".
+
+### Fase 6: Recepção!
+
+1. Posicione o relógio **em cima da bobina de ferrite**, com o **lado das 9 horas** alinhado com o bastão.
+2. Coroa do relógio na posição 0.
+3. **Segure o botão A** (inferior direito) por 2-3 segundos.
+4. Confirme que o **ponteiro dos segundos pulou para "RX"** (modo de recepção).
+5. **Não mexa.** A recepção leva de 2 a 30 minutos.
+6. Quando terminar, **toque rápido no botão A** → o ponteiro mostra **OK** ou **NO**.
+
+**Se der OK** + a hora e data corretas → 🎉 vitória!
+**Se der OK** mas a data ficou errada → corrigir **posição de referência** (manual H874, página 9).
+**Se der NO** → ler a seção de lições aprendidas e debugar com o multímetro.
+
+---
+
+## 🧠 Como funciona por dentro
 
 ```
 NTP (pool.ntp.org)
    ↓
-ESP32 mantém o relógio interno (UTC)
+M5Stick mantém relógio interno (UTC)
    ↓
-A cada segundo, calcula o bit WWVB daquele segundo do quadro de 60 s
+A cada segundo, calcula qual bit transmitir do quadro WWVB
    ↓
-Modula em largura de pulso uma portadora de 60 kHz no GPIO26
+ledcWrite(GPIO26, 50% duty quando bit=1, 0% quando bit=0)
+   → 60 kHz modulado em amplitude com o quadro WWVB
    ↓
-Bobina ligada ao pino gera um campo magnético de 60 kHz
+GPIO26 → PWMA do TB6612 (entrada de controle)
    ↓
-O relógio (Citizen, Casio multibanda…) capta o campo na própria
-antena de ferrite interna e decodifica hora + data + ano
+TB6612 amplifica para ±5V e empurra a bobina
+   ↓
+Bobina gera campo magnético modulado de 60 kHz
+   ↓
+Antena de ferrite interna do relógio capta o campo
+   ↓
+Relógio decodifica hora, data, ano e ajusta os ponteiros
 ```
 
-É **acoplamento magnético de campo próximo** — não é uma "antena de rádio" no sentido comum. Alcance: poucos centímetros a algumas dezenas, dependendo da bobina.
+O quadro WWVB tem 60 bits (1 por segundo, repete a cada minuto):
+- Bits 0, 9, 19, 29, 39, 49, 59: **marcadores** de sincronismo
+- Bits 1-8: minutos (BCD)
+- Bits 12-18: horas UTC (BCD)
+- Bits 22-33: dia do ano (BCD)
+- Bits 45-53: ano (2 dígitos, BCD)
+- Bits 55-58: ano bissexto + horário de verão
+
+A largura do pulso "low" no início de cada segundo determina o valor do bit:
+- **200 ms low + 800 ms high** = bit 0
+- **500 ms low + 500 ms high** = bit 1
+- **800 ms low + 200 ms high** = bit marcador
 
 ---
 
-## O que este fork adiciona ao upstream
+## 🔥 O que este fork adiciona ao projeto original
+
+Este é um fork do projeto [emmby/WatchTower](https://github.com/emmby/WatchTower) (originalmente para Adafruit QT Py ESP32 + DRV8833). Adições:
 
 | Mudança | Por que |
 |---|---|
-| Novo ambiente PlatformIO `m5stickc_plus` | board `m5stick-c` + variante `m5stack_stickc_plus`, partição `huge_app.csv` (3 MB de app, sem OTA) para caber em 4 MB de flash |
-| Suporte ao LCD via M5Unified | Mostra cabeçalho, status de boot, data, hora e IP na telinha (240×135) |
-| Pino da antena em **GPIO26** (era 13 no upstream) | GPIO13 no M5Stick é usado pelo LCD interno |
-| Constante `ANTENNA_DRIVE_LEVEL` (0–3) | Ajusta por software a corrente de saída do GPIO — permite testar bobina sem resistor em série |
-| Timezone padrão `BRT3` (Brasília, sem horário de verão) | Brasil mapeia para a estação WWVB nos relógios multibanda |
-| Documentação em português + receitas para o **Citizen H874** | Esta README + procedimentos específicos do calibre |
-| Git hooks (`pre-commit` build, `pre-push` build + testes) | Mesmo padrão do projeto irmão `soc-bot-abasp` |
+| Ambiente PlatformIO `m5stickc_plus` | Suporte ao M5StickC Plus 1.1 (4 MB flash) |
+| LCD via M5Unified | Mostra hora, data, IP, status na telinha do M5Stick |
+| Pino da antena em **GPIO26** (era GPIO13) | GPIO13 é usado pelo LCD interno do M5Stick |
+| Constante `ANTENNA_DRIVE_LEVEL` (0-3) | Controle por software da força de saída do GPIO |
+| Timezone padrão `BRT3` | Brasília sem horário de verão (correto pra Brasil atual) |
+| Documentação em PT-BR + receitas pro **Citizen H874** | Específico pra realidade brasileira |
+| Git hooks (`pre-commit` build, `pre-push` build + testes) | Qualidade de código |
+| Native tests via Unity | Validação do encoder WWVB sem hardware |
 
-O env original do projeto (`adafruit_qtpy_esp32`) está preservado em `platformio.ini` e continua funcionando — quem tiver a placa Adafruit não perde nada.
-
----
-
-## Hardware
-
-### Versão mínima (para teste)
-
-- **M5StickC Plus 1.1** (ESP32-PICO-D4, com LCD e WiFi embutidos)
-- **Bobina** ligada entre `G26` e `GND` (qualquer fio, 10–30 voltas para começar — ver seção sobre antena)
-- Cabo USB-C para alimentar e gravar
-- (Opcional) Cabos jumper macho-macho para a conexão
-
-### Versão definitiva (planejada)
-
-- **Amplificador ponte-H** — TB6612FNG ou DRV8833 entre o GPIO e a bobina (empurra o sinal com muito mais força)
-- **Antena de ferrite de rádio AM** (bastão ~100 mm com bobina já enrolada de fábrica)
-- **Placa ilhada** para a montagem soldada permanente
-- **Caixa "torre" impressa em 3D** (o repositório upstream tem o STL para a versão QT Py — uma caixa específica para o M5Stick precisa ser projetada à parte)
-- Ferro de solda
+O env original do projeto (`adafruit_qtpy_esp32`) está preservado.
 
 ---
 
-## Software necessário
+## 📊 Estado do projeto
 
-- [PlatformIO Core](https://platformio.org/) (instalado em `~/.platformio/penv/`)
-- Git
-
-Toda a toolchain do ESP32 é baixada automaticamente pelo PlatformIO na primeira compilação.
-
----
-
-## Clonando e configurando
-
-```bash
-git clone https://github.com/fbmarques-agios/WatchTower.git
-cd WatchTower
-
-# Ativa os hooks de git deste repositório (build pre-commit, build + testes pre-push)
-git config core.hooksPath .githooks
-```
+- ✅ **Firmware** funcionando 100% — sinal WWVB validado bit a bit
+- ✅ **Fork no GitHub** publicado e documentado
+- ✅ **Circuito amplificador TB6612 na protoboard** validado e operacional
+- ✅ **Recepção confirmada** com Citizen H874
+- ⏳ **Próxima fase:** migração pra placa ilhada (montagem definitiva soldada)
+- ⏳ **Fase final:** caixa "torre" 3D impressa sob medida pro M5Stick
 
 ---
 
-## Compilação e gravação
+## 🙏 Créditos
 
-A porta serial do M5StickC Plus normalmente aparece como `/dev/ttyUSB0`. Se ela estiver bloqueada por permissão, libere temporariamente com:
-
-```bash
-sudo chmod 666 /dev/ttyUSB0
-```
-
-(Para resolver de vez, `sudo usermod -aG dialout $USER` e relogue.)
-
-```bash
-PIO=~/.platformio/penv/bin/pio
-
-# Só compilar
-$PIO run -e m5stickc_plus
-
-# Compilar e gravar
-$PIO run -e m5stickc_plus -t upload
-
-# Monitor serial (115200 baud)
-$PIO device monitor -e m5stickc_plus
-
-# Rodar os testes nativos (Unity, no PC)
-$PIO test -e native
-```
-
-A gravação **substitui** o firmware que estiver na placa (por exemplo, o ESP32 Marauder). Para voltar, basta regravar via M5Burner.
+- **[emmby/WatchTower](https://github.com/emmby/WatchTower)** — projeto original. Toda a lógica de codificação WWVB, a arquitetura geral e a caixa 3D original são dele. **Este fork apenas adapta** para outro hardware (M5Stick) e adiciona instruções em PT-BR para realidade brasileira.
+- **[@fbmarques-agios](https://github.com/fbmarques-agios)** — fork, adaptação para M5StickC Plus, documentação em português.
+- **Comunidade brasileira de relógios** — o "público-alvo" que motivou este fork.
 
 ---
 
-## Primeira configuração (WiFi)
+## ⚖️ Aspectos legais
 
-1. No primeiro boot, o M5Stick mostra **"Configure o WiFi"** na tela e cria uma rede WiFi chamada **`WatchTower`** (aberta).
-2. Conecte o **celular** nessa rede — um portal automático abre.
-3. Selecione a sua rede WiFi de casa e digite a senha.
-4. O M5Stick reinicia, conecta, e sincroniza a hora via NTP (`pool.ntp.org`).
-5. A telinha passa a mostrar data, hora e IP. O painel web fica em `http://watchtower.local` (ou pelo IP mostrado na tela).
+A regulamentação da FCC (EUA) isenta transmissores de 60 kHz desde que o campo elétrico seja **inferior a 40 μV/m a 300 metros**. A potência envolvida neste projeto (bobina de poucos cm de alcance) está **ordens de grandeza abaixo** desse limite — o sinal mal sai da mesa onde está o circuito.
 
-A configuração de WiFi fica salva — só faz isso uma vez (até trocar de rede).
+Para uso pessoal/doméstico no Brasil, esta potência fica muito abaixo de qualquer limiar regulatório de dispositivo de baixa potência. Não há transmissão de "broadcast" significativa.
 
 ---
 
-## O que aparece no LCD
+## 📜 Licença
 
-```
-┌──────────────────────────────┐
-│ WatchTower               TX  │  ← cabeçalho ciano + indicador vermelho
-│ ──────────────────────────── │
-│ dom 24/05/2026               │  ← data (branco)
-│ 14:32:18                     │  ← hora grande (verde, atualiza por segundo)
-│ 192.168.0.170                │  ← IP do M5Stick na sua rede (ciano)
-└──────────────────────────────┘
-```
-
-Durante o boot, em vez da data/hora aparecem mensagens de status como `Iniciando…`, `Configure o WiFi rede: WatchTower`, `Conectando…`, `Sincronizado! Transmitindo…`.
+MIT — veja [LICENSE](LICENSE). Mesmos termos do projeto upstream.
 
 ---
 
-## A antena de transmissão (bobina)
+## 🆘 Suporte e perguntas
 
-A "antena" do WatchTower é uma **bobina** ligada entre **G26 e GND** do M5Stick. Quanto mais voltas e melhor o núcleo magnético, mais forte o campo e maior a chance de o relógio decodificar.
-
-### Versão simples (para o primeiro teste)
-
-Pegue qualquer fio (jumper, fio de cabo velho), raspe as duas pontas até aparecer o cobre, e enrole **10 a 30 voltas** numa caneta, lápis ou pilha AA. Ligue uma ponta em `G26`, a outra em `GND`.
-
-```
-  G26 ───(bobina)─── GND
-```
-
-⚠️ **Nunca** ligue um fio reto de G26 a GND. Isso é um curto e estressa o pino. Sempre enrolado.
-
-### Versão melhor (com bastão de ferrite)
-
-Bobina **com núcleo de ferrite** é o divisor de águas — concentra muito mais o campo magnético.
-
-Atalho barato: qualquer **rádio AM/MW velho** tem dentro uma "antena de ferrite" — um bastão com fio de cobre enrolado, com 2-4 fios saindo. É uma bobina pronta. Ligue as duas pontas da bobina maior (a com mais voltas) em `G26` e `GND`.
-
-Ou compre nova no Mercado Livre por R$ 10–30: pesquise por `bastão de ferrite com bobina` ou `antena ferrite rádio AM`.
-
-### Constante `ANTENNA_DRIVE_LEVEL` (0–3)
-
-No topo de [`WatchTower.ino`](WatchTower.ino), a constante `ANTENNA_DRIVE_LEVEL` define a força de saída do GPIO:
-
-| Nível | Corrente | Uso |
-|---|---|---|
-| 0 | ~5 mA  | Mais fraco, mais seguro |
-| 1 | ~10 mA | Intermediário |
-| 2 | ~20 mA | Padrão de um GPIO do ESP32 |
-| 3 | ~40 mA | Máximo — **só com resistor ~100 Ω em série** OU com bobina de alta indutância (como a de ferrite) |
-
-Sem resistor, fique no máximo no nível 2 com bobina improvisada. A bobina de ferrite tem indutância suficiente para limitar a corrente sozinha — com ela, o nível 3 é seguro permanentemente.
-
-Após mudar a constante, recompile e regrave (`pio run -e m5stickc_plus -t upload`).
+- **Bug ou dúvida?** Abra uma issue no GitHub.
+- **Travando no debug?** Releia as **lições aprendidas** acima — provavelmente tem a resposta. Especialmente: **compre o multímetro**.
+- **Quer compartilhar foto do seu build funcionando?** Marcaria os relojoeiros num PR ou issue. Adoraria ver.
 
 ---
 
-## Painel web
-
-Quando o M5Stick está conectado ao WiFi, acesse **http://watchtower.local** (ou o IP mostrado na tela) pelo navegador.
-
-O painel mostra:
-
-- Hora atual (com fuso e timezone)
-- Data por extenso
-- Janela de transmissão (os 60 bits do quadro WWVB, com a posição atual)
-- Último sync NTP
-- Uptime do dispositivo
-
----
-
-## Relógios compatíveis
-
-Funciona com qualquer relógio que receba a banda **WWVB (EUA, 60 kHz)** — tipicamente os "multibanda" 5 ou 6 (que pegam várias estações pelo mundo).
-
-| Marca / linha | Banda WWVB? |
-|---|---|
-| Casio Waveceptor / G-Shock Multiband 6 | ✅ |
-| Citizen multibanda (atomic timekeeping) | ✅ |
-| Junghans Mega Solar | ✅ |
-| Seiko Astron (radiocontrolados) | ✅ |
-| Relógios só DCF77 (Europa) | ❌ frequência diferente (77,5 kHz) |
-| Relógios só JJY (Japão) | ❌ frequência diferente (40 ou 60 kHz mas formato diferente) |
-
-### Citizen H874 (testado neste fork)
-
-O **Citizen H874** é um calibre Eco-Drive (alimentado por luz) com recepção radiocontrolada multibanda. Recebe **5 estações** em 4 regiões do mundo — uma delas é a estação **WWVB (Fort Collins, EUA)**, que é a que este projeto transmite.
-
-#### Configurações necessárias no relógio
-
-1. **Fuso horário em UTC-3** (Brasília). No H874, o fuso é selecionado pela posição do **ponteiro dos segundos** num modo específico:
-   - Coroa na posição 1
-   - Gire a coroa até o ponteiro dos segundos apontar para a posição **57** (= UTC-3)
-   - Empurre a coroa para a posição 0
-
-   Esta é a posição correta porque o H874 escolhe a estação pelo fuso horário, e os fusos americanos (incluindo o UTC-3 do Brasil) ficam mapeados para a estação WWVB.
-
-2. **Horário de verão em "STD MA"** (horário padrão / manual). Como o firmware transmite sempre "sem horário de verão" (consistente com a regra atual do Brasil), o "STD MA" garante que o relógio ignore o flag de DST e mostre sempre o horário padrão.
-
-3. **Estado de carga OK**. O Eco-Drive precisa estar bem carregado — se o ponteiro dos segundos andar 1 vez a cada 2 segundos, a recepção **não roda**. Deixe o relógio na luz forte por algumas horas antes de testar.
-
-#### Antena interna fica nas 9 horas
-
-A antena de ferrite do H874 fica na **lateral esquerda do mostrador**, na posição das 9 horas. Para o melhor acoplamento, deite o relógio sobre a sua bobina de transmissão com o lado das 9 horas alinhado com a bobina.
-
-#### Procedimento de recepção manual
-
-1. Coroa na posição 0.
-2. **Segure o botão A** (inferior direito) por **2 a 3 segundos** e solte.
-3. O ponteiro dos segundos deve **pular para a posição "RX"** e parar de andar normalmente. Se ele continuar marcando a hora, a recepção **não começou** — tente segurar por mais tempo.
-4. **Coloque o relógio sobre a bobina, lado das 9 horas alinhado**, e **não mova**. A recepção leva de 2 a 30 minutos. Quando termina, o ponteiro dos segundos volta ao normal.
-5. **Confira o resultado**: coroa na posição 0, **toque rápido no botão A** (apertar e soltar). O ponteiro dos segundos vai apontar para **OK** (sucesso) ou **NO** (falha).
-
----
-
-## Problemas comuns
-
-### O relógio sincronizou só a hora, a data continua errada
-
-Isso quase sempre é **posição de referência do calendário desalinhada** — o relógio recebeu a data correta, mas o ponteiro do dia está num "zero" deslocado. Solução no próprio relógio (manual H874, pág. 9):
-
-1. Coroa na posição 0.
-2. **Segure o botão B** (superior direito) por **10 segundos ou mais**. Os ponteiros vão se mover para as posições de referência salvas em memória.
-3. Confira se cada um está na posição correta:
-
-| Indicador | Deve apontar para |
-|---|---|
-| Fase da lua | Lua cheia |
-| Ponteiro de função (sub-mostrador) | "S" (Sunday / domingo) |
-| Indicação da data | Meio caminho entre 31 e 1 |
-| Ponteiros das horas, minutos, segundos | 0h 00min 0s (todos para o 12) |
-| Ponteiro das 24 horas | 24 |
-
-4. Se tudo certo, aperte B uma vez para confirmar.
-5. Se algum estiver errado: puxe a coroa para a posição 2, aperte B para selecionar o alvo a corrigir (sequência: fase da lua → ponteiro de função/data → horas/min/24h → segundos), gire a coroa para acertar cada um, empurre a coroa para 0 e aperte B para confirmar.
-
-Depois disso, refaça a recepção manual.
-
-### O resultado dá NO
-
-O sinal está fraco demais para o relógio decodificar. Em ordem de impacto:
-
-1. **Bobina ruim** — poucas voltas ou sem núcleo de ferrite. Resolva com mais voltas (50+) ou trocando para uma bobina de ferrite de rádio AM.
-2. **Posição** — o ferrite interno do relógio (nas 9 horas) precisa estar perto e alinhado com a sua bobina. Tente girar o relógio.
-3. **Carga baixa** no Eco-Drive — recarregue na luz forte.
-4. **Drive level baixo** — suba o `ANTENNA_DRIVE_LEVEL` (lembrando do limite de corrente sem amplificador).
-
-### Pino do M5Stick estressado
-
-Se você ficou no `ANTENNA_DRIVE_LEVEL = 3` com bobina de fio comum por horas, o GPIO pode ter degradado. Sinais: o sinal sumiu mesmo recompilando, ou a transmissão ficou intermitente. Solução: trocar o pino (existem outros GPIOs livres no header — basta mudar `PIN_ANTENNA` no código) ou trocar o M5Stick.
-
-### A telinha fica preta
-
-Se o firmware não estiver inicializando o LCD (bug, build errado), confira pelo monitor serial se o ESP32 está bootando. Tela preta sem ESP32 também responder = M5Stick travado ou descarregado. Tela preta com serial ativo = bug no display init — abra uma issue.
-
----
-
-## Estrutura do projeto
-
-```
-.
-├── WatchTower.ino              # Firmware: setup, loop, encoder WWVB, LCD
-├── platformio.ini              # Envs de build (m5stickc_plus, adafruit_qtpy_esp32, native)
-├── customJS.h                  # JavaScript customizado injetado no ESPUI
-├── test/test_native/           # Testes Unity (rodam no PC)
-├── test/mocks/                 # Mocks de Arduino/ESP/WiFi/ESPUI usados pelos testes
-├── enclosure/                  # STL e .f3d da caixa (upstream, formato para QT Py)
-├── docs/                       # Imagens usadas pelo README original
-├── .githooks/                  # pre-commit e pre-push (build + testes)
-├── CLAUDE.md                   # Guia para Claude Code (arquitetura, gotchas)
-└── README.md                   # Este arquivo
-```
-
-### Ambientes de build (`platformio.ini`)
-
-| Env | Placa / variante | Para que serve |
-|---|---|---|
-| `m5stickc_plus` *(padrão)* | `m5stick-c` + variante `m5stack_stickc_plus`, partição `huge_app.csv` | Este fork |
-| `adafruit_qtpy_esp32` | `adafruit_qtpy_esp32`, partição `default_8MB.csv` | Build original do upstream |
-| `native` | host (Linux/macOS/Win) | Testes Unity do encoder WWVB |
-
----
-
-## Hooks de git
-
-Configurados em [`.githooks/`](.githooks/):
-
-- **pre-commit** — compila `m5stickc_plus` (cacheado, ~15 s) para pegar erro de sintaxe antes de gravar o commit.
-- **pre-push** — compila + roda os 5 testes nativos antes de subir.
-
-Ative em qualquer clone com:
-
-```bash
-git config core.hooksPath .githooks
-```
-
-Os hooks pulam graciosamente se o PlatformIO não estiver instalado.
-
----
-
-## Status do projeto
-
-Este fork ainda está em evolução. O **firmware** está estável e validado (5/5 testes nativos passam, build limpo, transmissão WWVB conferida no log serial). A **antena de teste com fio comum** funciona de forma intermitente. Próximos passos:
-
-- [ ] Receber e ligar a antena de ferrite (pendente)
-- [ ] Receber o amplificador TB6612FNG e a placa ilhada (pendente)
-- [ ] Montagem soldada definitiva (pendente)
-- [ ] Projetar uma torre 3D específica para o M5Stick (pendente)
-- [ ] Abrir Pull Request opcional ao [upstream](https://github.com/emmby/WatchTower) com o env do M5Stick
-
----
-
-## Créditos
-
-- Projeto original: [emmby/WatchTower](https://github.com/emmby/WatchTower) — toda a lógica de codificação WWVB, esquema H-bridge e caixa 3D vêm dele. Este fork apenas adapta para outro hardware e adiciona o LCD.
-- Fork e adaptação para M5StickC Plus / Brasil: [@fbmarques-agios](https://github.com/fbmarques-agios).
-- Bibliotecas: WiFiManager (tzapu), ESPUI (emmby fork), AsyncWebServer (ESP32Async), M5Unified (M5Stack), Adafruit NeoPixel.
-
----
-
-## Licença
-
-MIT — veja [LICENSE](LICENSE). Mesmos termos do upstream.
-
-> ⚖️ Sobre legalidade: o WWVB real opera com licença federal nos EUA. A regulamentação da FCC isenta transmissores de 60 kHz desde que o campo elétrico seja menor que 40 μV/m a 300 metros — e uma bobina de poucos centímetros de alcance fica ordens de grandeza abaixo disso. Para uso doméstico no Brasil, a potência aqui envolvida está bem abaixo de qualquer limiar regulatório de dispositivo de baixa potência.
+> **"E agora seu Citizen pega sinal em São Paulo."** 🇧🇷⌚📡
