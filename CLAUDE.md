@@ -114,3 +114,35 @@ git config core.hooksPath .githooks
 | `enclosure/` | Upstream 3D model (QT Py form factor) | Don't edit — upstream owns it. M5Stick-specific enclosure will live under a new path |
 
 End-user instructions (where to plug what, how to use the watch) → `README.md`. Firmware-side decisions, build-system quirks, hidden invariants → here.
+
+## Documentation Maintenance
+
+### Anti-Bloat Rule (MANDATORY — max 250 lines)
+
+**Why this rule exists** (keep it, don't "modernize" it away): it was written when
+models had small context windows, but what it actually bought was *coherence and a
+standard place for things* — and that is still true. The line cap is only the
+mechanism; the rule's real job is to force the question **"is this a landmine or is
+it reference?"** every time someone writes a line here.
+
+**Routing (the part that does the work).** Before adding ANY line to CLAUDE.md:
+- **Reference material (not a landmine)** → `README.md`
+
+CLAUDE.md ONLY gets: architecture, modules, dev commands, **dev-time landmines**, and
+key architectural decisions. Each gotcha: max 1 line (long lines are fine — 1 line).
+
+**The consequence test (replaces "is it short enough?").** A gotcha earns its line only
+if it answers: *what breaks if I don't know this?* Name the failure. "Grafana is 11.4.0"
+is reference; "Grafana 12.x silently skips PostgreSQL queries" is a landmine. No
+concrete failure → it goes to the reference doc.
+
+**Drift control (the risk the line cap never addressed).** Nothing here expires by
+itself, which is how stale counts survive for months. Quarterly, or whenever a module is
+refactored: delete gotchas whose code path no longer exists, and re-verify any line that
+states a count. **A wrong landmine is worse than a missing one.**
+
+**On the 250-line cap** (standardised across projects 2026-09-21): at ~25 tokens/line
+this file is well under 1% of a 1M context and sits in the cached prompt prefix, so size
+is no longer the binding constraint; **signal dilution is**. If the cap is ever hit,
+prune stale lines and shrink whatever block restates what the code already says — don't
+raise the number.
